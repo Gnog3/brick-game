@@ -1,10 +1,8 @@
 #ifndef FSM_H
 #define FSM_H
 
-#include "backend.h"
-
 typedef enum {
-  Start = 0,
+  Begin,
   Spawn,
   Moving,
   Shifting,

@@ -4,7 +4,7 @@
 
 #include "defines.h"
 
-void save_highscore(int score) {
+void saveHighscore(int score) {
   FILE* file = fopen(SAVE_FILENAME, "w");
   if (file) {
     fprintf(file, "%d", score);
@@ -12,7 +12,7 @@ void save_highscore(int score) {
   }
 }
 
-int load_highscore() {
+int loadHighscore() {
   int score = 0;
   FILE* file = fopen(SAVE_FILENAME, "r");
   if (file) {

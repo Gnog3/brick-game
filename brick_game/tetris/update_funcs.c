@@ -6,26 +6,39 @@
 #include "defines.h"
 #include "figures.h"
 #include "fsm.h"
+#include "save.h"
 
-void spawn_next_figure(game_state* gs) {
-  memcpy(gs->current_figure, FIGURES[gs->next_figure], 4 * 4 * sizeof(int));
-  gs->current_figure_x = FIGURE_SPAWN_X;
-  gs->current_figure_y = FIGURE_SPAWN_Y;
+void updateScore(InternalGameState* s) {
+  if (s->score > s->highscore) {
+    s->highscore = s->score;
+  }
 }
 
-bool is_figure_pos_valid(game_state* gs, int figure[4][4], int x, int y) {
+void updateLevel(InternalGameState* s) {
+  s->level = s->score / 600 + 1;
+  if (s->level > 10) {
+    s->level = 10;
+  }
+  s->speed = (float)DEFAULT_SPEED / (1.0 + 0.2 * (s->level - 1));
+}
+
+void spawnNextFigure(InternalGameState* s) {
+  memcpy(s->current_figure, FIGURES[s->next_figure], 4 * 4 * sizeof(int));
+  s->current_figure_x = FIGURE_SPAWN_X;
+  s->current_figure_y = FIGURE_SPAWN_Y;
+}
+
+bool isFigurePosValid(InternalGameState* s, int figure[4][4], int x, int y) {
   bool valid = true;
   int curr_y = y;
   for (int i = 0; i < 4 && valid; i++) {
     int curr_x = x;
     for (int j = 0; j < 4 && valid; j++) {
-      if (figure[i][j] != COLOR_BLACK &&
-          (curr_x < 0 || curr_x >= PLAYING_FIELD_WIDTH || curr_y < 0 ||
-           curr_y >= PLAYING_FIELD_HEIGHT)) {
+      if (figure[i][j] != 0 && (curr_x < 0 || curr_x >= PLAYING_FIELD_WIDTH ||
+                                curr_y < 0 || curr_y >= PLAYING_FIELD_HEIGHT)) {
         valid = false;
       }
-      if (figure[i][j] != COLOR_BLACK &&
-          gs->playing_field[curr_y][curr_x] != COLOR_BLACK) {
+      if (figure[i][j] != 0 && s->playing_field[curr_y][curr_x] != 0) {
         valid = false;
       }
       curr_x++;
@@ -35,116 +48,104 @@ bool is_figure_pos_valid(game_state* gs, int figure[4][4], int x, int y) {
   return valid;
 }
 
-void shift_current_figure(game_state* gs) {
-  if (is_figure_pos_valid(gs, gs->current_figure, gs->current_figure_x,
-                          gs->current_figure_y + 1)) {
-    gs->current_figure_y++;
-    gs->state = Moving;
-    gs->last_move_time = get_current_time_ms();
+void shiftCurrentFigure(InternalGameState* s) {
+  if (isFigurePosValid(s, s->current_figure, s->current_figure_x,
+                       s->current_figure_y + 1)) {
+    s->current_figure_y++;
+    s->state = Moving;
   } else {
-    gs->state = Attaching;
+    s->state = Attaching;
   }
 }
 
-void handle_movement(game_state* gs) {
-  if (gs->action == Left) {
-    if (is_figure_pos_valid(gs, gs->current_figure, gs->current_figure_x - 1,
-                            gs->current_figure_y)) {
-      gs->current_figure_x--;
+void handleMovement(InternalGameState* s) {
+  if (s->action == Left) {
+    if (isFigurePosValid(s, s->current_figure, s->current_figure_x - 1,
+                         s->current_figure_y)) {
+      s->current_figure_x--;
     }
-  } else if (gs->action == Right) {
-    if (is_figure_pos_valid(gs, gs->current_figure, gs->current_figure_x + 1,
-                            gs->current_figure_y)) {
-      gs->current_figure_x++;
+  } else if (s->action == Right) {
+    if (isFigurePosValid(s, s->current_figure, s->current_figure_x + 1,
+                         s->current_figure_y)) {
+      s->current_figure_x++;
     }
-  } else if (gs->action == Action) {
+  } else if (s->action == Action) {
     int figure[4][4];
-    memcpy(figure, gs->current_figure, 4 * 4 * sizeof(int));
-    rotate_figure(figure);
-    if (is_figure_pos_valid(gs, figure, gs->current_figure_x,
-                            gs->current_figure_y)) {
-      rotate_figure(gs->current_figure);
+    memcpy(figure, s->current_figure, 4 * 4 * sizeof(int));
+    rotateFigure(figure);
+    if (isFigurePosValid(s, figure, s->current_figure_x, s->current_figure_y)) {
+      rotateFigure(s->current_figure);
     }
-  } else if (gs->action == Down) {
-    while (gs->state != Attaching) {
-      shift_current_figure(gs);
+  } else if (s->action == Down) {
+    while (s->state != Attaching) {
+      shiftCurrentFigure(s);
     }
   }
 }
 
-bool is_line_full(game_state* gs, int line) {
+static bool isLineFull(InternalGameState* s, int line) {
   bool full = line >= 0 && line < PLAYING_FIELD_HEIGHT;
   for (int i = 0; i < PLAYING_FIELD_WIDTH && full; i++) {
-    full = gs->playing_field[line][i] != COLOR_BLACK;
+    full = s->playing_field[line][i] != 0;
   }
   return full;
 }
 
-void clear_line(game_state* gs, int line) {
+static void clearLine(InternalGameState* s, int line) {
   for (int i = line; i > 0; i--) {
     for (int j = 0; j < PLAYING_FIELD_WIDTH; j++) {
-      gs->playing_field[i][j] = gs->playing_field[i - 1][j];
+      s->playing_field[i][j] = s->playing_field[i - 1][j];
     }
   }
   for (int i = 0; i < PLAYING_FIELD_WIDTH; i++) {
-    gs->playing_field[0][i] = COLOR_BLACK;
+    s->playing_field[0][i] = 0;
   }
 }
 
-void clear_full_lines(game_state* gs) {
+static void clearFullLines(InternalGameState* s) {
   int first_full_line = -1;
   for (int i = 0; i < PLAYING_FIELD_HEIGHT && first_full_line == -1; i++) {
-    if (is_line_full(gs, i)) {
+    if (isLineFull(s, i)) {
       first_full_line = i;
     }
   }
   if (first_full_line != -1) {
-    clear_line(gs, first_full_line);
+    clearLine(s, first_full_line);
     int number_of_full_lines = 1;
     for (int i = first_full_line + 1; i < PLAYING_FIELD_HEIGHT; i++) {
-      if (is_line_full(gs, i)) {
+      if (isLineFull(s, i)) {
         number_of_full_lines++;
-        clear_line(gs, i);
+        clearLine(s, i);
       }
     }
     if (number_of_full_lines == 1) {
-      gs->score += 100;
+      s->score += 100;
     } else if (number_of_full_lines == 2) {
-      gs->score += 300;
+      s->score += 300;
     } else if (number_of_full_lines == 3) {
-      gs->score += 700;
+      s->score += 700;
     } else if (number_of_full_lines == 4) {
-      gs->score += 1500;
+      s->score += 1500;
+    }
+    if (s->score > s->highscore) {
+      s->highscore = s->score;
+      saveHighscore(s->score);
     }
   }
 }
 
-void attach(game_state* gs) {
-  int curr_y = gs->current_figure_y;
+void attach(InternalGameState* s) {
+  int curr_y = s->current_figure_y;
   for (int i = 0; i < 4; i++) {
-    int curr_x = gs->current_figure_x;
+    int curr_x = s->current_figure_x;
     for (int j = 0; j < 4; j++) {
-      int color = gs->current_figure[i][j];
-      if (color != COLOR_BLACK) {
-        gs->playing_field[curr_y][curr_x] = color;
+      int color = s->current_figure[i][j];
+      if (color != 0) {
+        s->playing_field[curr_y][curr_x] = 1;
       }
       curr_x++;
     }
     curr_y++;
   }
-  clear_full_lines(gs);
-}
-
-void update_score(game_state* gs) {
-  if (gs->score > gs->highscore) {
-    gs->highscore = gs->score;
-  }
-}
-
-void update_level(game_state* gs) {
-  gs->level = gs->score / 600 + 1;
-  if (gs->level > 10) {
-    gs->level = 10;
-  }
-  gs->speed = (float)DEFAULT_SPEED / (1.0 + 0.2 * (gs->level - 1));
+  clearFullLines(s);
 }
